@@ -5,18 +5,17 @@
 #SBATCH --nodes=1
 #SBATCH --exclusive
 #SBATCH --array=1-7
-#SBATCH --output=/lustre/aoc/observers/nm-11514/data/65887556/logs/%x_%A_%a.out
-#SBATCH --error=/lustre/aoc/observers/nm-11514/data/65887556/logs/%x_%A_%a.err
+#SBATCH --output=/lustre/aoc/observers/nm-11514/data/%x_%A_%a.out
+#SBATCH --error=/lustre/aoc/observers/nm-11514/data/%x_%A_%a.err
 
 set -euo pipefail
 
 BASE_DIR="/lustre/aoc/observers/nm-11514/data/"
 TASK_ID="${SLURM_ARRAY_TASK_ID:-1}"
-
-mkdir -p "${BASE_DIR}/logs"
+JOB_ID="${SLURM_JOB_ID:-local}"
 
 echo "Job started: $(date)"
-echo "Job ID: ${SLURM_JOB_ID:-local}"
+echo "Job ID: ${JOB_ID}"
 echo "Array task ID: ${TASK_ID}"
 echo "Node: $(hostname)"
 echo "BASE_DIR: ${BASE_DIR}"
@@ -29,9 +28,8 @@ PIPE_SCRIPT_SOURCE="${HOME}/${PIPE_SCRIPT}"
 # Find tarred MeasurementSets from input globs or paths. Quote recursive globs when
 # submitting with sbatch so they expand on the compute node.
 if [[ "$#" -eq 0 ]]; then
-    echo "ERROR: Provide one or more *.ms.tgz globs or paths." >&2
-    echo "Example: sbatch --array=1-N casa_obs_array.sbatch '${BASE_DIR}/**/*.ms.tgz'" >&2
-    exit 1
+    echo "No *.ms.tgz input provided; defaulting to ${BASE_DIR}/**/*.ms.tgz"
+    set -- "${BASE_DIR}/**/*.ms.tgz"
 fi
 
 shopt -s globstar nullglob
