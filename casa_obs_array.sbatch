@@ -1,0 +1,107 @@
+#!/bin/bash
+#SBATCH --job-name=casa_obs_array
+#SBATCH --partition=batch
+#SBATCH --time=2-00:00:00
+#SBATCH --nodes=1
+#SBATCH --exclusive
+#SBATCH --array=1-7
+#SBATCH --output=/lustre/aoc/observers/nm-11514/data/65887556/logs/%x_%A_%a.out
+#SBATCH --error=/lustre/aoc/observers/nm-11514/data/65887556/logs/%x_%A_%a.err
+
+set -euo pipefail
+
+BASE_DIR="/lustre/aoc/observers/nm-11514/data/"
+TASK_ID="${SLURM_ARRAY_TASK_ID:-1}"
+
+mkdir -p "${BASE_DIR}/logs"
+
+echo "Job started: $(date)"
+echo "Job ID: ${SLURM_JOB_ID:-local}"
+echo "Array task ID: ${TASK_ID}"
+echo "Node: $(hostname)"
+echo "BASE_DIR: ${BASE_DIR}"
+
+# Require the known-good pipeline script.
+PIPE_SCRIPT="casa_pipescript_666.py"
+PIPE_SCRIPT_SOURCE="${HOME}/${PIPE_SCRIPT}"
+
+
+# Find tarred MeasurementSets from input globs or paths. Quote recursive globs when
+# submitting with sbatch so they expand on the compute node.
+if [[ "$#" -eq 0 ]]; then
+    echo "ERROR: Provide one or more *.ms.tgz globs or paths." >&2
+    echo "Example: sbatch --array=1-N casa_obs_array.sbatch '${BASE_DIR}/**/*.ms.tgz'" >&2
+    exit 1
+fi
+
+shopt -s globstar nullglob
+MS_TGZS=()
+for INPUT in "$@"; do
+    if [[ -f "${INPUT}" ]]; then
+        MS_TGZS+=("${INPUT}")
+        continue
+    fi
+
+    while IFS= read -r MATCH; do
+        MS_TGZS+=("${MATCH}")
+    done < <(compgen -G "${INPUT}")
+done
+
+if [[ "${#MS_TGZS[@]}" -eq 0 ]]; then
+    echo "ERROR: No *.ms.tgz files matched input: $*" >&2
+    exit 1
+fi
+
+mapfile -t MS_TGZS < <(printf '%s\n' "${MS_TGZS[@]}" | sort -u)
+
+if (( TASK_ID < 1 || TASK_ID > ${#MS_TGZS[@]} )); then
+    echo "ERROR: Array task ${TASK_ID} is outside matched file range 1-${#MS_TGZS[@]}" >&2
+    exit 1
+fi
+
+MS_TGZ="${MS_TGZS[$((TASK_ID - 1))]}"
+MS_DIR="$(cd "$(dirname "${MS_TGZ}")" && pwd)"
+MS_TGZ_BASENAME="$(basename "${MS_TGZ}")"
+
+cd "${MS_DIR}"
+
+if [[ ! -e "${PIPE_SCRIPT}" && ! -L "${PIPE_SCRIPT}" ]]; then
+    if [[ ! -f "${PIPE_SCRIPT_SOURCE}" ]]; then
+        echo "ERROR: Pipeline script source does not exist: ${PIPE_SCRIPT_SOURCE}" >&2
+        exit 1
+    fi
+
+    ln -s "${PIPE_SCRIPT_SOURCE}" "${PIPE_SCRIPT}"
+fi
+
+# Expected extracted MS name.
+MS_NAME="${MS_TGZ_BASENAME%.tgz}"
+
+echo "Matched MS tarballs: ${#MS_TGZS[@]}"
+echo "Working directory: ${MS_DIR}"
+echo "MS tarball: ${MS_TGZ_BASENAME}"
+echo "Expected MS: ${MS_NAME}"
+
+# Untar only if the MS directory is not already present.
+if [[ ! -d "${MS_NAME}" ]]; then
+    echo "Extracting ${MS_TGZ_BASENAME}"
+    tar -xzvf "${MS_TGZ_BASENAME}"
+else
+    echo "MS directory already exists; skipping extraction: ${MS_NAME}"
+fi
+
+if [[ ! -d "${MS_NAME}" ]]; then
+    echo "ERROR: Expected extracted MS directory does not exist: ${MS_NAME}" >&2
+    exit 1
+fi
+
+START_DELAY=$(( (TASK_ID - 1) * 120 ))
+echo "Sleeping ${START_DELAY} seconds before launching CASA"
+sleep "${START_DELAY}"
+
+echo "Pipeline script: ${PIPE_SCRIPT}"
+echo "Running pipeline on MS: ${MS_NAME}"
+
+xvfb-run casa-vla --nogui --log2term --pipeline -c "${PIPE_SCRIPT}" "${MS_NAME}"
+
+echo "Job finished: $(date)"

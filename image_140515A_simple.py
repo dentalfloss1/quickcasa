@@ -1,4 +1,5 @@
 import glob
+import fnmatch
 import math
 import os
 
@@ -18,28 +19,20 @@ TARGET = "140515A"
 MS_GLOB = "obs*/14A*.ms"
 
 IMSIZE = 5120
-PIXELS_PER_SYNTH_BEAM = 10.0
 NITER = 5000
+PIXELS_PER_SYNTH_BEAM = 10.0
 
-VLA_BANDS_GHZ = {
-    "P": (0.230, 0.470),
-    "L": (1.000, 2.000),
-    "S": (2.000, 4.000),
-    "C": (4.000, 8.000),
-    "X": (8.000, 12.000),
-    "Ku": (12.000, 18.000),
-    "K": (18.000, 26.500),
-    "Ka": (26.500, 40.000),
-    "Q": (40.000, 50.000),
-}
-
-
-def band_for_frequency(freq_hz):
-    freq_ghz = freq_hz / 1.0e9
-    for band, limits in VLA_BANDS_GHZ.items():
-        if limits[0] <= freq_ghz < limits[1]:
-            return band
-    return None
+VLA_BAND_SPWS = [
+    ("P", "EVLA_P#*"),
+    ("L", "EVLA_L#*"),
+    ("S", "EVLA_S#*"),
+    ("C", "EVLA_C#*"),
+    ("X", "EVLA_X#*"),
+    ("Ku", "EVLA_KU#*"),
+    ("K", "EVLA_K#*"),
+    ("Ka", "EVLA_KA#*"),
+    ("Q", "EVLA_Q#*"),
+]
 
 
 def field_exists(vis, field_name):
@@ -50,26 +43,26 @@ def field_exists(vis, field_name):
         msmd.close()
 
 
-def spws_by_band(vis, field_name):
-    msmd.open(vis)
+def spw_names(vis):
+    tb.open(os.path.join(vis, "SPECTRAL_WINDOW"))
     try:
-        field_id = list(msmd.fieldnames()).index(field_name)
-        spws = list(msmd.spwsforfield(field_id))
-        by_band = {}
-        for spw in spws:
-            chan_freqs = msmd.chanfreqs(spw)
-            if len(chan_freqs):
-                mean_freq = sum(chan_freqs) / float(len(chan_freqs))
-                band = band_for_frequency(mean_freq)
-                if band is not None:
-                    by_band.setdefault(band, {"spws": [], "freqs": []})
-                    by_band[band]["spws"].append(spw)
-                    by_band[band]["freqs"].append(mean_freq)
-        if not by_band:
-            raise RuntimeError("No channel frequencies found for {0}".format(vis))
-        return by_band
+        return list(tb.getcol("NAME"))
     finally:
-        msmd.close()
+        tb.close()
+
+
+def band_spws_in_ms(vis):
+    names = spw_names(vis)
+    found = []
+    for band, spw_selector in VLA_BAND_SPWS:
+        spw_ids = [
+            spw_id
+            for spw_id, name in enumerate(names)
+            if fnmatch.fnmatch(name.upper(), spw_selector)
+        ]
+        if spw_ids:
+            found.append((band, spw_ids))
+    return found
 
 
 def max_baseline_m(vis):
@@ -93,8 +86,27 @@ def max_baseline_m(vis):
     return max_bl
 
 
-def cell_from_antennas(vis, freq_hz):
+def spw_selection(spw_ids):
+    return ",".join(str(spw_id) for spw_id in spw_ids)
+
+
+def mean_frequency_hz_for_spw_ids(vis, spw_ids):
+    msmd.open(vis)
+    try:
+        freqs = [msmd.meanfreq(spw_id) for spw_id in spw_ids]
+    finally:
+        msmd.close()
+
+    if not freqs:
+        raise RuntimeError(
+            "No SPWs matched selector {0} in {1}".format(spw_selection(spw_ids), vis)
+        )
+    return sum(freqs) / float(len(freqs))
+
+
+def cell_from_ms_and_spw_ids(vis, spw_ids):
     c_m_s = 299792458.0
+    freq_hz = mean_frequency_hz_for_spw_ids(vis, spw_ids)
     wavelength_m = c_m_s / freq_hz
     beam_rad = wavelength_m / max_baseline_m(vis)
     cell_arcsec = beam_rad * 206264.806247 / PIXELS_PER_SYNTH_BEAM
@@ -106,6 +118,14 @@ def image_name_for_ms(vis, band):
     if base.endswith(".ms"):
         base = base[:-3]
     return os.path.join("images", base + "_" + TARGET + "_" + band)
+
+
+def image_exists(imagename, fitsname):
+    return os.path.exists(imagename + ".image") or os.path.exists(fitsname)
+
+
+def is_zero_row_selection_error(exc):
+    return "Data selection ended with 0 rows" in str(exc)
 
 
 def main():
@@ -121,12 +141,18 @@ def main():
             print("Skipping {0}: target {1} not found".format(vis, TARGET))
             continue
 
-        for band, band_data in sorted(spws_by_band(vis, TARGET).items()):
-            freq_hz = sum(band_data["freqs"]) / float(len(band_data["freqs"]))
-            spw = ",".join(str(s) for s in sorted(band_data["spws"]))
-            cell = cell_from_antennas(vis, freq_hz)
+        for band, spw_ids in band_spws_in_ms(vis):
+            spw = spw_selection(spw_ids)
+            cell = cell_from_ms_and_spw_ids(vis, spw_ids)
             imagename = image_name_for_ms(vis, band)
             fitsname = imagename + ".fits"
+
+            if image_exists(imagename, fitsname):
+                print("")
+                print("Skipping existing image:")
+                print("  imagename= {0}".format(imagename))
+                print("  fitsname = {0}".format(fitsname))
+                continue
 
             print("")
             print("Imaging {0}".format(vis))
@@ -137,20 +163,26 @@ def main():
             print("  cell     = {0}".format(cell))
             print("  imagename= {0}".format(imagename))
 
-            tclean(
-                vis=vis,
-                field=TARGET,
-                spw=spw,
-                pblimit=-1e-12,
-                imsize=IMSIZE,
-                cell=cell,
-                gridder="standard",
-                deconvolver="hogbom",
-                weighting="natural",
-                niter=NITER,
-                imagename=imagename,
-                interactive=False,
-            )
+            try:
+                tclean(
+                    vis=vis,
+                    field=TARGET,
+                    spw=spw,
+                    pblimit=-1e-12,
+                    imsize=IMSIZE,
+                    cell=cell,
+                    gridder="standard",
+                    deconvolver="hogbom",
+                    weighting="natural",
+                    niter=NITER,
+                    imagename=imagename,
+                    interactive=False,
+                )
+            except RuntimeError as exc:
+                if is_zero_row_selection_error(exc):
+                    print("Skipping {0} {1}: selected 0 rows".format(vis, band))
+                    continue
+                raise
 
             exportfits(
                 imagename=imagename + ".image",
