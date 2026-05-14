@@ -10,7 +10,7 @@ from collections import OrderedDict
 
 
 DEFAULT_MS_PATTERNS = ["*.ms", "obs*/*.ms"]
-DEFAULT_OUTPUT_DIR = "images"
+DEFAULT_OUTPUT_DIR = "auto"
 DEFAULT_NITER = 5000
 DEFAULT_PIXELS_PER_SYNTH_BEAM = 10.0
 DEFAULT_PB_FWHM = 1.0
@@ -455,10 +455,18 @@ def safe_name(value):
 
 
 def ms_stem(vis):
-    relpath = os.path.relpath(vis, os.getcwd())
-    if relpath.endswith(".ms"):
-        relpath = relpath[:-3]
-    return safe_name(relpath.replace(os.sep, "__"))
+    base = os.path.basename(os.path.normpath(vis))
+    if base.endswith(".ms"):
+        base = base[:-3]
+    return safe_name(base)
+
+
+def output_dir_for_ms(vis, output_dir):
+    if output_dir != "auto":
+        return output_dir
+
+    parent = os.path.dirname(os.path.abspath(os.path.normpath(vis)))
+    return os.path.join(parent, "images")
 
 
 def image_name_for_ms(vis, field, band, output_dir):
@@ -572,7 +580,7 @@ def parse_args():
     parser.add_argument("--band", action="append", help="VLA band to image. May be repeated or comma-separated.")
     parser.add_argument("--spw", help="Explicit CASA SPW selection. If set, automatic band grouping is disabled.")
     parser.add_argument("--band-label", default="spw", help="Image-name label used with --spw. Default: spw.")
-    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for CASA image products and FITS files.")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for CASA image products and FITS files. Default: auto, meaning an images directory beside each MS.")
     parser.add_argument("--imsize", default="auto", help="Image size in pixels, or auto. Default: auto.")
     parser.add_argument("--min-imsize", type=int, default=DEFAULT_MIN_IMSIZE, help="Minimum auto image size. Default: 512.")
     parser.add_argument("--max-imsize", type=int, default=DEFAULT_MAX_IMSIZE, help="Maximum auto image size. Default: 8192.")
@@ -605,10 +613,11 @@ def main():
             "datasets under one of: {0}".format(", ".join(DEFAULT_MS_PATTERNS))
         )
 
-    if not os.path.isdir(args.output_dir):
-        os.makedirs(args.output_dir)
-
     for vis in ms_list:
+        output_dir = output_dir_for_ms(vis, args.output_dir)
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+
         fields = selected_fields(vis, args)
         spw_groups = selected_spw_groups(vis, args)
         if not fields:
@@ -627,7 +636,7 @@ def main():
                 )
                 cell = cell_string(cell_arcsec)
                 imsize = imsize_for_group(vis, spw_ids, cell_arcsec, args)
-                imagename = image_name_for_ms(vis, field, band, args.output_dir)
+                imagename = image_name_for_ms(vis, field, band, output_dir)
                 fitsname = imagename + ".fits"
 
                 if image_exists(imagename, fitsname, args.deconvolver) and not args.overwrite:
