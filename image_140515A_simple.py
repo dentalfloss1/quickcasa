@@ -197,6 +197,15 @@ def field_ids_for_intent(vis, intent_selector):
     return sorted(selected)
 
 
+def intent_names(vis):
+    msmd = msmd_tool()
+    msmd.open(vis)
+    try:
+        return list(msmd.intents())
+    finally:
+        msmd.close()
+
+
 def match_field_selectors(vis, selectors):
     fields = field_entries(vis)
     selected = OrderedDict()
@@ -240,12 +249,16 @@ def selected_fields(vis, args):
         if target_ids:
             selected = [fields_by_id[field_id] for field_id in target_ids]
         else:
+            intents = intent_names(vis)
+            intent_summary = ", ".join(intents) if intents else "none reported"
             print(
-                "No fields with intent containing {0} found in {1}; imaging all fields".format(
+                "No fields with intent containing {0} found in {1}; skipping MS".format(
                     args.intent, vis
                 )
             )
-            selected = fields
+            print("  Available intents: {0}".format(intent_summary))
+            print("  Use --field or --all-fields to override this selection.")
+            selected = []
 
     if exclude_selectors:
         excluded = set(field["id"] for field in match_field_selectors(vis, exclude_selectors))
@@ -613,6 +626,10 @@ def main():
             "datasets under one of: {0}".format(", ".join(DEFAULT_MS_PATTERNS))
         )
 
+    imaged_ms = set()
+    skipped_ms = []
+    image_count = 0
+
     for vis in ms_list:
         output_dir = output_dir_for_ms(vis, args.output_dir)
         if not os.path.isdir(output_dir):
@@ -622,12 +639,15 @@ def main():
         spw_groups = selected_spw_groups(vis, args)
         if not fields:
             print("Skipping {0}: no selected fields".format(vis))
+            skipped_ms.append((vis, "no selected fields"))
             continue
         if not spw_groups:
             print("Skipping {0}: no selected VLA SPWs".format(vis))
+            skipped_ms.append((vis, "no selected VLA SPWs"))
             continue
 
         data_column = data_column_for_ms(vis, args.datacolumn)
+        ms_had_output = False
 
         for field in fields:
             for band, spw_ids, spw in spw_groups:
@@ -644,6 +664,7 @@ def main():
                     print("Skipping existing image:")
                     print("  imagename= {0}".format(imagename))
                     print("  fitsname = {0}".format(fitsname))
+                    ms_had_output = True
                     continue
 
                 print_imaging_summary(
@@ -651,6 +672,8 @@ def main():
                 )
 
                 if args.dry_run:
+                    ms_had_output = True
+                    image_count += 1
                     continue
 
                 try:
@@ -681,6 +704,22 @@ def main():
                     fitsimage=fitsname,
                     overwrite=True,
                 )
+                ms_had_output = True
+                image_count += 1
+
+        if ms_had_output:
+            imaged_ms.add(vis)
+        else:
+            skipped_ms.append((vis, "no images produced"))
+
+    print("")
+    print("Imaging summary:")
+    print("  Measurement sets matched : {0}".format(len(ms_list)))
+    print("  Measurement sets imaged  : {0}".format(len(imaged_ms)))
+    print("  Image jobs run/planned   : {0}".format(image_count))
+    print("  Measurement sets skipped : {0}".format(len(skipped_ms)))
+    for vis, reason in skipped_ms:
+        print("    {0}: {1}".format(vis, reason))
 
 
 if __name__ == "__main__":

@@ -19,6 +19,20 @@ echo "Node: $(hostname)"
 echo "BASE_DIR: ${BASE_DIR}"
 echo "Submit directory: ${SUBMIT_DIR}"
 
+usage() {
+    cat <<EOF
+Usage:
+  sbatch $(basename "$0") <ms-path-or-glob> [<ms-path-or-glob> ...] [-- <image-script-args> ...]
+
+Examples:
+  sbatch $(basename "$0") "/lustre/aoc/observers/nm-11514/data/**/*.ms"
+  sbatch $(basename "$0") "/lustre/aoc/observers/nm-11514/data/**/*.ms" -- --band C --dry-run
+
+Inputs must be MeasurementSet directories ending in .ms. Tarballs are not accepted.
+With no --field argument, image_140515A_simple.py selects only fields with TARGET intent.
+EOF
+}
+
 # Require the generalized imaging script. IMAGE_SCRIPT_SOURCE may be set at
 # submission time; otherwise prefer the submit directory, then HOME.
 IMAGE_SCRIPT="image_140515A_simple.py"
@@ -46,8 +60,9 @@ for ARG in "$@"; do
 done
 
 if [[ "${#DATA_INPUTS[@]}" -eq 0 ]]; then
-    echo "No .ms input provided; defaulting to ${BASE_DIR}/**/*.ms"
-    DATA_INPUTS=("${BASE_DIR}/**/*.ms")
+    echo "ERROR: No .ms input or glob provided." >&2
+    usage >&2
+    exit 2
 fi
 
 add_ms_input() {
