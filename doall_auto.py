@@ -38,6 +38,8 @@ parser.add_argument("--pb-fwhm", type=float, default=DEFAULT_PB_FWHM)
 parser.add_argument("--min-imsize", type=int, default=DEFAULT_MIN_IMSIZE)
 parser.add_argument("--max-imsize", type=int, default=DEFAULT_MAX_IMSIZE)
 parser.add_argument("--niter", type=int, default=DEFAULT_NITER)
+parser.add_argument("--plot-avgchannel", default="8")
+parser.add_argument("--plot-avgtime", default="60s")
 args = parser.parse_args()
 origvis = args.origvis
 
@@ -75,6 +77,23 @@ def safe_remove(path):
         shutil.rmtree(path)
     elif os.path.exists(path) or os.path.islink(path):
         os.remove(path)
+
+
+def safe_plotms(**kwargs):
+    kwargs.setdefault("overwrite", True)
+    vis = kwargs.get("vis", "")
+    if isinstance(vis, str) and vis.endswith(".ms"):
+        kwargs.setdefault("averagedata", True)
+        if args.plot_avgchannel:
+            kwargs.setdefault("avgchannel", args.plot_avgchannel)
+        if args.plot_avgtime:
+            kwargs.setdefault("avgtime", args.plot_avgtime)
+    plotfile = kwargs.get("plotfile", "(no plotfile)")
+    try:
+        plotms(**kwargs)
+    except Exception as exc:
+        print("WARNING: plotms failed for {0}: {1}".format(plotfile, exc))
+        print("WARNING: continuing; diagnostic plot was skipped")
 
 
 def safe_name(value):
@@ -325,20 +344,20 @@ for visname, spw in split_vis:
                 freqfit='line', extendflags=False, timedevscale=5., freqdevscale=5.,
                 extendpols=True, growaround=False, action='apply', flagbackup=True,
                 overwrite=True, writeflags=True, datacolumn='DATA')
-    plotms(vis=visname, xaxis='freq', yaxis='amp', showgui=False,
+    safe_plotms(vis=visname, xaxis='freq', yaxis='amp', showgui=False,
             field=bfield, plotfile=f'{spw}freqampbfield.jpg')
-    plotms(vis=visname, xaxis='freq', yaxis='amp', showgui=False,
+    safe_plotms(vis=visname, xaxis='freq', yaxis='amp', showgui=False,
             field=gfield, plotfile=f'{spw}freqampgfield.jpg')
-    plotms(vis=visname, xaxis='time', yaxis='amp', showgui=False,
+    safe_plotms(vis=visname, xaxis='time', yaxis='amp', showgui=False,
             field=bfield, plotfile=f'{spw}timeampbfield.jpg')
-    plotms(vis=visname, xaxis='time', yaxis='amp', showgui=False,
-            field=gfield, plotfile=f'{spw}timeampgfield.jpg') 
+    safe_plotms(vis=visname, xaxis='time', yaxis='amp', showgui=False,
+            field=gfield, plotfile=f'{spw}timeampgfield.jpg')
     flagdata(vis=visname, mode='tfcrop', field=target,
             ntime='scan', timecutoff=6.0, freqcutoff=6.0, timefit='poly',
             freqfit='poly', extendflags=False, timedevscale=5., freqdevscale=5.,
             extendpols=True, growaround=False, action='apply', flagbackup=True,
             overwrite=True, writeflags=True, datacolumn='DATA')
-    
+
     flagdata(vis=visname, mode='extend', field=target,
             datacolumn='data', clipzeros=True, ntime='scan', extendflags=False,
             extendpols=True, growtime=80., growfreq=80., growaround=False,
@@ -364,7 +383,7 @@ for visname, spw in split_vis:
                 minblperant = minbaselines, solnorm = False,  gaintype = 'G',
                 solint = "int", combine = '', calmode='p',
                 parang = False,append = append)
-    plotms(vis=pregfile, xaxis='time', yaxis='phase', coloraxis='corr', 
+    safe_plotms(vis=pregfile, xaxis='time', yaxis='phase', coloraxis='corr',
                 field=bfield, iteraxis='antenna',plotrange=[-1,-1,-180,180],
                 showgui= False, gridrows=3, gridcols=2, plotfile=f'{spw}initialgain.jpg')
     gaincal(vis=visname, caltable = kfile, field = bfield, refant = referenceant,
@@ -399,7 +418,7 @@ for visname, spw in split_vis:
             gaintable=[kfile,bfile,kxfile],gainfield=[bfield,bfield,gfield],
             parang = False, append = True)
     polcal(vis=visname,caltable=polfile,field=bfield,refant=referenceant,gaintable=[bfile,kxfile,gfile],poltype='D',solint='inf')
-    plotms(vis=gfile,xaxis='time',yaxis='amp',coloraxis='corr',iteraxis='antenna',gridrows=3,gridcols=2,showgui=False,
+    safe_plotms(vis=gfile,xaxis='time',yaxis='amp',coloraxis='corr',iteraxis='antenna',gridrows=3,gridcols=2,showgui=False,
             plotfile=f'relpolgaintable{spw}.jpg')
     kfile2 = f'{kfilebase}1'
     kxfile2 = f'{kfilebase}x1'
@@ -412,7 +431,7 @@ for visname, spw in split_vis:
                 minblperant = minbaselines, solnorm = False,  gaintype = 'G',
                 solint = "int", combine = '', calmode='p',
                 parang = False,append = append, gaintable=[bfile,kxfile,gfile,polfile])
-    plotms(vis=pregfile2, xaxis='time', yaxis='phase', coloraxis='corr', 
+    safe_plotms(vis=pregfile2, xaxis='time', yaxis='phase', coloraxis='corr',
                 field=bfield, iteraxis='antenna',plotrange=[-1,-1,-180,180],
                 showgui= False, gridrows=3, gridcols=2, plotfile=f'{spw}initialgain2.jpg')
     bandpass(vis=visname, caltable = bfile2,
@@ -458,13 +477,13 @@ for visname, spw in split_vis:
                 selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2,polfile2],
                 gainfield=[gfield,'',''],
                 parang=True, interp=['linear','',''])
-    
+
     applycal(vis=visname, field=target,
             selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2,polfile2],
             gainfield=[gfield,'',''],
             parang=True, interp=['linear',''])
-    
-    
+
+
     # now flag using 'rflag' option  for flux, phase cal and extra fields tight flagging
     for f in calfields:
         flagdata(vis=visname, mode="tfcrop", datacolumn="corrected",
@@ -480,14 +499,14 @@ for visname, spw in split_vis:
                 spectralmax=500.0, extendpols=False, growaround=False,
                 flagneartime=False, flagnearfreq=False, action="apply",
                 flagbackup=True, overwrite=True, writeflags=True)
-    
+
         ## Now extend the flags (70% more means full flag, change if required)
         flagdata(vis=visname, mode="extend", field=f,
                 datacolumn="corrected", clipzeros=True, ntime="scan",
                 extendflags=False, extendpols=False, growtime=90.0, growfreq=90.0,
                 growaround=False, flagneartime=False, flagnearfreq=False,
                 action="apply", flagbackup=True, overwrite=True, writeflags=True)
-    
+
     # Now flag for target - moderate flagging, more flagging in self-cal cycles
     flagdata(vis=visname, mode="tfcrop", datacolumn="corrected",
             field=target, ntime='scan', timecutoff=6.0, freqcutoff=5.0,
@@ -495,7 +514,7 @@ for visname, spw in split_vis:
             extendflags=False, timedevscale=5.0, freqdevscale=5.0,
             extendpols=False, growaround=False, action="apply", flagbackup=True,
             overwrite=True, writeflags=True)
-    for i in range(3): 
+    for i in range(3):
     # now flag using 'rflag' option
         flagdata(vis=visname, mode="rflag", datacolumn="corrected",
                 field=target, timecutoff=5.0, freqcutoff=5.0, timefit="poly",
@@ -504,7 +523,7 @@ for visname, spw in split_vis:
                 extendpols=False, growaround=False, flagneartime=False,
                 flagnearfreq=False, action="apply", flagbackup=True, overwrite=True,
                 writeflags=True, ntime='scan')
-    for i in range(3): 
+    for i in range(3):
     # now flag using 'rflag' option
         flagdata(vis=visname, mode="rflag", datacolumn="corrected",
                 field=target, timecutoff=4.0, freqcutoff=4.0, timefit="poly",
@@ -513,7 +532,7 @@ for visname, spw in split_vis:
                 extendpols=False, growaround=False, flagneartime=False,
                 flagnearfreq=False, action="apply", flagbackup=True, overwrite=True,
                 writeflags=True, ntime='scan')
-    for i in range(3): 
+    for i in range(3):
     # now flag using 'rflag' option
         flagdata(vis=visname, mode="rflag", datacolumn="corrected",
                 field=target, timecutoff=3.0, freqcutoff=3.0, timefit="poly",
