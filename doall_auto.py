@@ -177,6 +177,40 @@ def field_names_for_intent(vis, intent_fragment):
         md.close()
 
 
+def field_ids_for_name(vis, field):
+    md = get_msmd()
+    md.open(vis)
+    try:
+        return [int(field_id) for field_id in md.fieldsforname(field)]
+    finally:
+        md.close()
+
+
+def field_has_rows(vis, field):
+    field_ids = field_ids_for_name(vis, field)
+    if not field_ids:
+        return False
+
+    tbtool = get_tb()
+    tbtool.open(vis)
+    try:
+        for field_id in field_ids:
+            selected = tbtool.query("FIELD_ID == {0}".format(field_id))
+            try:
+                if selected.nrows() > 0:
+                    return True
+            finally:
+                selected.close()
+    finally:
+        tbtool.close()
+    return False
+
+
+def is_zero_row_selection_error(exc):
+    message = str(exc)
+    return "zero rows" in message or "MSSelectionNullSelection" in message
+
+
 def required_fields_for_intents(vis):
     bandpass_fields = field_names_for_intent(vis, "CALIBRATE_BANDPASS")
     gain_fields = field_names_for_intent(vis, "CALIBRATE_PHASE")
@@ -309,15 +343,27 @@ for pattern in [
     for f in glob.glob(pattern):
         safe_remove(f)
 
+calibrated_vis = []
 for visname, spw in split_vis:
     md = get_msmd()
     md.open(visname)
     try:
         nchan = len(md.chanfreqs(0))
         referenceant = md.antennanames()[0]
-        bfieldno = md.fieldsforname(bfield)[0]
     finally:
         md.close()
+    band_target_fields = [field for field in target_fields if field_has_rows(visname, field)]
+    if not band_target_fields:
+        print("Skipping {0}: no target rows for {1}".format(visname, ", ".join(target_fields)))
+        continue
+    missing_calfields = [
+        field for field in unique([bfield, gfield, fluxfield])
+        if not field_has_rows(visname, field)
+    ]
+    if missing_calfields:
+        print("Skipping {0}: no calibrator rows for {1}".format(visname, ", ".join(missing_calfields)))
+        continue
+    target = ",".join(band_target_fields)
     if bfield!=fluxfield:
         calfields = unique([bfield,gfield,fluxfield])
         allfields= unique([bfield,gfield,target,fluxfield])
@@ -352,11 +398,17 @@ for visname, spw in split_vis:
             field=bfield, plotfile=f'{spw}timeampbfield.jpg')
     safe_plotms(vis=visname, xaxis='time', yaxis='amp', showgui=False,
             field=gfield, plotfile=f'{spw}timeampgfield.jpg')
-    flagdata(vis=visname, mode='tfcrop', field=target,
-            ntime='scan', timecutoff=6.0, freqcutoff=6.0, timefit='poly',
-            freqfit='poly', extendflags=False, timedevscale=5., freqdevscale=5.,
-            extendpols=True, growaround=False, action='apply', flagbackup=True,
-            overwrite=True, writeflags=True, datacolumn='DATA')
+    try:
+        flagdata(vis=visname, mode='tfcrop', field=target,
+                ntime='scan', timecutoff=6.0, freqcutoff=6.0, timefit='poly',
+                freqfit='poly', extendflags=False, timedevscale=5., freqdevscale=5.,
+                extendpols=True, growaround=False, action='apply', flagbackup=True,
+                overwrite=True, writeflags=True, datacolumn='DATA')
+    except RuntimeError as exc:
+        if is_zero_row_selection_error(exc):
+            print("Skipping {0}: CASA reported zero target rows for {1}".format(visname, target))
+            continue
+        raise
 
     flagdata(vis=visname, mode='extend', field=target,
             datacolumn='data', clipzeros=True, ntime='scan', extendflags=False,
@@ -541,11 +593,12 @@ for visname, spw in split_vis:
                 extendpols=False, growaround=False, flagneartime=False,
                 flagnearfreq=False, action="apply", flagbackup=True, overwrite=True,
                 writeflags=True, ntime='scan')
+    calibrated_vis.append((visname, spw, band_target_fields))
 # Image each split band with cell/imsize derived from the MS frequencies and antenna layout.
-for v, band_label in split_vis:
+for v, band_label, image_target_fields in calibrated_vis:
     cell, imsize = auto_tclean_params(v)
     print("Auto tclean parameters for {0}: cell={1}, imsize={2}".format(v, cell, imsize))
-    for target_field in target_fields:
+    for target_field in image_target_fields:
         imagename = "targetspw{0}_{1}".format(band_label, safe_name(target_field))
         tclean(vis=v, field=target_field, spw='', datacolumn='corrected',
                imagename=imagename, imsize=imsize, cell=cell,
