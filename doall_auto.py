@@ -39,7 +39,7 @@ parser.add_argument("--min-imsize", type=int, default=DEFAULT_MIN_IMSIZE)
 parser.add_argument("--max-imsize", type=int, default=DEFAULT_MAX_IMSIZE)
 parser.add_argument("--niter", type=int, default=DEFAULT_NITER)
 parser.add_argument("--plot-avgchannel", default="8")
-parser.add_argument("--plot-avgtime", default="60s")
+parser.add_argument("--plot-avgtime", default="60")
 args = parser.parse_args()
 origvis = args.origvis
 
@@ -87,7 +87,7 @@ def safe_plotms(**kwargs):
         if args.plot_avgchannel:
             kwargs.setdefault("avgchannel", args.plot_avgchannel)
         if args.plot_avgtime:
-            kwargs.setdefault("avgtime", args.plot_avgtime)
+            kwargs.setdefault("avgtime", str(args.plot_avgtime).rstrip("sS"))
     plotfile = kwargs.get("plotfile", "(no plotfile)")
     try:
         plotms(**kwargs)
