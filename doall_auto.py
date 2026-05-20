@@ -161,49 +161,47 @@ def vla_band_spws(vis):
     return [(band, spw_ids) for band, spw_ids in groups.items() if spw_ids]
 
 
-def field_names_for_intent(vis, intent_fragment):
+TARGET_INTENTS = ["OBSERVE_TARGET#ON_SOURCE", "OBSERVE_TARGET#UNSPECIFIED", "OBSERVE_TARGET"]
+
+
+def field_ids_for_intent(vis, intent_fragment):
     md = get_msmd()
     field_ids = []
     md.open(vis)
     try:
-        fieldnames = list(md.fieldnames())
         for intent in md.intents():
             if intent_fragment.upper() not in intent.upper():
                 continue
             for field_id in md.fieldsforintent(intent):
                 field_ids.append(int(field_id))
-        return [fieldnames[field_id] for field_id in unique(field_ids)]
+        return unique(field_ids)
     finally:
         md.close()
 
 
-def field_ids_for_name(vis, field):
+def field_name_for_id(vis, field_id):
     md = get_msmd()
     md.open(vis)
     try:
-        return [int(field_id) for field_id in md.fieldsforname(field)]
+        fieldnames = list(md.fieldnames())
+        if 0 <= field_id < len(fieldnames):
+            return fieldnames[field_id]
     finally:
         md.close()
+    return str(field_id)
 
 
-def field_has_rows(vis, field):
-    field_ids = field_ids_for_name(vis, field)
-    if not field_ids:
-        return False
-
+def field_id_has_rows(vis, field_id):
     tbtool = get_tb()
     tbtool.open(vis)
     try:
-        for field_id in field_ids:
-            selected = tbtool.query("FIELD_ID == {0}".format(field_id))
-            try:
-                if selected.nrows() > 0:
-                    return True
-            finally:
-                selected.close()
+        selected = tbtool.query("FIELD_ID == {0}".format(field_id))
+        try:
+            return selected.nrows() > 0
+        finally:
+            selected.close()
     finally:
         tbtool.close()
-    return False
 
 
 def is_zero_row_selection_error(exc):
@@ -211,31 +209,131 @@ def is_zero_row_selection_error(exc):
     return "zero rows" in message or "MSSelectionNullSelection" in message
 
 
+def data_desc_ids_for_spws(vis, spw_ids):
+    spw_id_set = set(int(spw_id) for spw_id in spw_ids)
+    tbtool = get_tb()
+    tbtool.open(os.path.join(vis, "DATA_DESCRIPTION"))
+    try:
+        spw_column = tbtool.getcol("SPECTRAL_WINDOW_ID")
+    finally:
+        tbtool.close()
+    return [
+        data_desc_id for data_desc_id, spw_id in enumerate(spw_column)
+        if int(spw_id) in spw_id_set
+    ]
+
+
+def field_ids_for_intents(vis, intent_fragments):
+    field_ids = []
+    for intent_fragment in intent_fragments:
+        field_ids.extend(field_ids_for_intent(vis, intent_fragment))
+    return unique(field_ids)
+
+
+def field_ids_have_data_desc_rows(vis, field_ids, data_desc_ids):
+    if not field_ids or not data_desc_ids:
+        return False
+
+    tbtool = get_tb()
+    tbtool.open(vis)
+    try:
+        for field_id in field_ids:
+            for data_desc_id in data_desc_ids:
+                selected = tbtool.query(
+                    "FIELD_ID == {0} AND DATA_DESC_ID == {1}".format(
+                        field_id, data_desc_id
+                    )
+                )
+                try:
+                    if selected.nrows() > 0:
+                        return True
+                finally:
+                    selected.close()
+    finally:
+        tbtool.close()
+    return False
+
+
+def band_has_target_rows(vis, spw_ids):
+    return field_ids_have_data_desc_rows(
+        vis,
+        field_ids_for_intents(vis, TARGET_INTENTS),
+        data_desc_ids_for_spws(vis, spw_ids),
+    )
+
+
+def populated_field_ids_for_intent(vis, intent_fragment):
+    return [
+        field_id for field_id in field_ids_for_intent(vis, intent_fragment)
+        if field_id_has_rows(vis, field_id)
+    ]
+
+
+def first_populated_field_for_intents(vis, intent_fragments):
+    for intent_fragment in intent_fragments:
+        field_ids = populated_field_ids_for_intent(vis, intent_fragment)
+        if field_ids:
+            return field_ids[0]
+    return None
+
+
+def populated_fields_for_intents(vis, intent_fragments):
+    for intent_fragment in intent_fragments:
+        field_ids = populated_field_ids_for_intent(vis, intent_fragment)
+        if field_ids:
+            return field_ids
+    return []
+
+
+def field_label(vis, field_id):
+    return "{0} ({1})".format(field_id, field_name_for_id(vis, field_id))
+
+
 def required_fields_for_intents(vis):
-    bandpass_fields = field_names_for_intent(vis, "CALIBRATE_BANDPASS")
-    gain_fields = field_names_for_intent(vis, "CALIBRATE_PHASE")
-    target_fields = field_names_for_intent(vis, "OBSERVE_TARGET#UNSPECIFIED")
-    if not target_fields:
-        target_fields = field_names_for_intent(vis, "OBSERVE_TARGET")
+    bfield = first_populated_field_for_intents(
+        vis, ["CALIBRATE_BANDPASS#ON_SOURCE", "CALIBRATE_BANDPASS"]
+    )
+    fluxfield = first_populated_field_for_intents(
+        vis,
+        [
+            "CALIBRATE_AMPLI#ON_SOURCE",
+            "CALIBRATE_AMPLI",
+            "CALIBRATE_FLUX#ON_SOURCE",
+            "CALIBRATE_FLUX",
+            "CALIBRATE_BANDPASS#ON_SOURCE",
+            "CALIBRATE_BANDPASS",
+        ],
+    )
+    gfield = first_populated_field_for_intents(
+        vis, ["CALIBRATE_PHASE#ON_SOURCE", "CALIBRATE_PHASE"]
+    )
+    target_fields = populated_fields_for_intents(vis, TARGET_INTENTS)
+    if fluxfield is None:
+        fluxfield = bfield
 
     missing = []
-    if not bandpass_fields:
+    if bfield is None:
         missing.append("CALIBRATE_BANDPASS")
-    if not gain_fields:
+    if gfield is None:
         missing.append("CALIBRATE_PHASE")
     if not target_fields:
-        missing.append("OBSERVE_TARGET#UNSPECIFIED")
+        missing.append("OBSERVE_TARGET")
     if missing:
-        raise RuntimeError("Could not find required scan intents in {0}: {1}".format(vis, ", ".join(missing)))
+        raise RuntimeError(
+            "Could not find populated scan intents in {0}: {1}".format(
+                vis, ", ".join(missing)
+            )
+        )
 
-    bfield = bandpass_fields[0]
-    fluxfield = bfield
-    gfield = gain_fields[0]
-    print("Auto-selected fields from scan intents:")
-    print("  bandpass = {0}".format(bfield))
-    print("  fluxcal  = {0}".format(fluxfield))
-    print("  gaincal  = {0}".format(gfield))
-    print("  target   = {0}".format(", ".join(target_fields)))
+    print("Auto-selected populated fields from scan intents in {0}:".format(vis))
+    print("  bandpass = {0}".format(field_label(vis, bfield)))
+    print("  fluxcal  = {0}".format(field_label(vis, fluxfield)))
+    print("  gaincal  = {0}".format(field_label(vis, gfield)))
+    print(
+        "  target   = {0}".format(
+            ", ".join(field_label(vis, field_id) for field_id in target_fields)
+        )
+    )
     return target_fields, gfield, fluxfield, bfield
 
 
@@ -312,12 +410,16 @@ def auto_tclean_params(vis):
     return "{0:.6f}arcsec".format(cell_arcsec), next_good_imsize(bounded_imsize)
 
 
-target_fields, gfield, fluxfield, bfield = required_fields_for_intents(origvis)
-target = ",".join(target_fields)
-
 split_vis = []
 for band, spw_ids in vla_band_spws(origvis):
     outputvis = band_ms_name(band)
+    if not band_has_target_rows(origvis, spw_ids):
+        print(
+            "Skipping VLA {0} band SPWs {1}: no target rows".format(
+                band, spw_selection(spw_ids)
+            )
+        )
+        continue
     for f in [outputvis, outputvis + ".flagversions"]:
         safe_remove(f)
     print("Splitting VLA {0} band SPWs {1} to {2}".format(band, spw_selection(spw_ids), outputvis))
@@ -352,18 +454,21 @@ for visname, spw in split_vis:
         referenceant = md.antennanames()[0]
     finally:
         md.close()
-    band_target_fields = [field for field in target_fields if field_has_rows(visname, field)]
-    if not band_target_fields:
-        print("Skipping {0}: no target rows for {1}".format(visname, ", ".join(target_fields)))
+    try:
+        target_field_ids, gfield_id, fluxfield_id, bfield_id = required_fields_for_intents(visname)
+    except RuntimeError as exc:
+        print("Skipping {0}: {1}".format(visname, exc))
         continue
-    missing_calfields = [
-        field for field in unique([bfield, gfield, fluxfield])
-        if not field_has_rows(visname, field)
+
+    target = ",".join(str(field_id) for field_id in target_field_ids)
+    gfield = str(gfield_id)
+    fluxfield = str(fluxfield_id)
+    bfield = str(bfield_id)
+    target_field_labels = [
+        (str(field_id), field_name_for_id(visname, field_id))
+        for field_id in target_field_ids
     ]
-    if missing_calfields:
-        print("Skipping {0}: no calibrator rows for {1}".format(visname, ", ".join(missing_calfields)))
-        continue
-    target = ",".join(band_target_fields)
+    fluxfield_name = field_name_for_id(visname, fluxfield_id)
     if bfield!=fluxfield:
         calfields = unique([bfield,gfield,fluxfield])
         allfields= unique([bfield,gfield,target,fluxfield])
@@ -376,7 +481,7 @@ for visname, spw in split_vis:
     gfilebase = f'gainspw{spw}.G'
     pregfilebase = f'gainspw{spw}.Gpre'
     fluxfilebase = f'fluxspw{spw}.fluxscale'
-    if fluxfield in ['J0408-6545','0408-6545']:
+    if fluxfield_name in ['J0408-6545','0408-6545']:
         setjy(vis=visname,field=fluxfield,scalebychan=True, standard="manual",fluxdensity=[17.066,0.0,0.0,0.0],spix=[-1.179],reffreq="1284MHz")
     else:
         setjy(vis=visname,field=fluxfield,scalebychan=True)
@@ -583,13 +688,13 @@ for visname, spw in split_vis:
                 extendpols=False, growaround=False, flagneartime=False,
                 flagnearfreq=False, action="apply", flagbackup=True, overwrite=True,
                 writeflags=True, ntime='scan')
-    calibrated_vis.append((visname, spw, band_target_fields))
+    calibrated_vis.append((visname, spw, target_field_labels))
 # Image each split band with cell/imsize derived from the MS frequencies and antenna layout.
 for v, band_label, image_target_fields in calibrated_vis:
     cell, imsize = auto_tclean_params(v)
     print("Auto tclean parameters for {0}: cell={1}, imsize={2}".format(v, cell, imsize))
-    for target_field in image_target_fields:
-        imagename = "targetspw{0}_{1}".format(band_label, safe_name(target_field))
+    for target_field, target_field_name in image_target_fields:
+        imagename = "targetspw{0}_{1}".format(band_label, safe_name(target_field_name))
         tclean(vis=v, field=target_field, spw='', datacolumn='corrected',
                imagename=imagename, imsize=imsize, cell=cell,
                gridder='standard', pblimit=-1e-12, specmode='mfs',
