@@ -422,7 +422,6 @@ for visname, spw in split_vis:
                 flagneartime=False, flagnearfreq=False, action='apply',
                 flagbackup=True, overwrite=True, writeflags=True)
     kfile = f'{kfilebase}'
-    kxfile = f'{kfilebase}x'
     bfile = f'{bfilebase}'
     pregfile = f'{pregfilebase}'
     gfile = f'{gfilebase}'
@@ -444,37 +443,37 @@ for visname, spw in split_vis:
             combine = '', bandtype = 'B', fillgaps = 4,
             gaintable = [kfile], gainfield = bfield,
             parang = False, append = append)
-    gaincal(vis=visname, caltable = kxfile, field=gfield, refant=referenceant,
-            gaintype='KCROSS', smodel=[1.,0.,1.,0.], solint='inf', combine='scan',
-            minblperant=minbaselines, minsnr=0, gaintable=[kfile,bfile],gainfield=[bfield,bfield])
+    round1_gaintable = [kfile,bfile]
+    round1_gainfield = [bfield,bfield]
     gaincal(vis=visname, caltable = gfile,
             field = fluxfield, refant = referenceant,
             minblperant = minbaselines, solnorm = False,  gaintype = 'G',
             solint = "int", combine = '', calmode='ap',
-            gaintable=[kfile,bfile,kxfile],gainfield=[bfield,bfield,gfield],
+            gaintable=round1_gaintable,gainfield=round1_gainfield,
             parang = False, append = False)
     if fluxfield!=bfield:
         gaincal(vis=visname, caltable = gfile,
                 field = bfield, refant = referenceant,
                 minblperant = minbaselines, solnorm = False,  gaintype = 'G',
                 solint = "int", combine = '', calmode='ap',
-                gaintable=[kfile,bfile,kxfile],gainfield=[bfield,bfield,gfield],
+                gaintable=round1_gaintable,gainfield=round1_gainfield,
                 parang = False, append = True)
     gaincal(vis=visname, caltable = gfile,
             field = gfield, refant = referenceant,
             minblperant = minbaselines, solnorm = False,  gaintype = 'G',
             solint = "int", combine = '', calmode='ap',
-            gaintable=[kfile,bfile,kxfile],gainfield=[bfield,bfield,gfield],
+            gaintable=round1_gaintable,gainfield=round1_gainfield,
             parang = False, append = True)
     kfile2 = f'{kfilebase}1'
     bfile2 = f'{bfilebase}1'
     pregfile2 = f'{pregfilebase}1'
     gfile2 = f'{gfilebase}1'
     fluxfile2 = f'{fluxfilebase}1'
+    preg2_gaintable = [bfile,gfile]
     gaincal(vis=visname, caltable = pregfile2, field = bfield, refant = referenceant,
                 minblperant = minbaselines, solnorm = False,  gaintype = 'G',
                 solint = "int", combine = '', calmode='p',
-                parang = False,append = append, gaintable=[bfile,kxfile,gfile])
+                parang = False,append = append, gaintable=preg2_gaintable)
     safe_plotms(vis=pregfile2, xaxis='time', yaxis='phase', coloraxis='corr',
                 field=bfield, iteraxis='antenna',plotrange=[-1,-1,-180,180],
                 showgui= False, gridrows=3, gridcols=2, plotfile=f'{spw}initialgain2.jpg')
