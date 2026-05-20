@@ -376,7 +376,6 @@ for visname, spw in split_vis:
     gfilebase = f'gainspw{spw}.G'
     pregfilebase = f'gainspw{spw}.Gpre'
     fluxfilebase = f'fluxspw{spw}.fluxscale'
-    polfilebase = f'polspw{spw}.D'
     if fluxfield in ['J0408-6545','0408-6545']:
         setjy(vis=visname,field=fluxfield,scalebychan=True, standard="manual",fluxdensity=[17.066,0.0,0.0,0.0],spix=[-1.179],reffreq="1284MHz")
     else:
@@ -427,8 +426,6 @@ for visname, spw in split_vis:
     bfile = f'{bfilebase}'
     pregfile = f'{pregfilebase}'
     gfile = f'{gfilebase}'
-    fluxfile = f'{fluxfilebase}'
-    polfile = f'{polfilebase}'
 
     append=False
     gaincal(vis=visname, caltable = pregfile, field = bfield, refant = referenceant,
@@ -469,20 +466,15 @@ for visname, spw in split_vis:
             solint = "int", combine = '', calmode='ap',
             gaintable=[kfile,bfile,kxfile],gainfield=[bfield,bfield,gfield],
             parang = False, append = True)
-    polcal(vis=visname,caltable=polfile,field=bfield,refant=referenceant,gaintable=[bfile,kxfile,gfile],poltype='D',solint='inf')
-    safe_plotms(vis=gfile,xaxis='time',yaxis='amp',coloraxis='corr',iteraxis='antenna',gridrows=3,gridcols=2,showgui=False,
-            plotfile=f'relpolgaintable{spw}.jpg')
     kfile2 = f'{kfilebase}1'
-    kxfile2 = f'{kfilebase}x1'
     bfile2 = f'{bfilebase}1'
     pregfile2 = f'{pregfilebase}1'
     gfile2 = f'{gfilebase}1'
     fluxfile2 = f'{fluxfilebase}1'
-    polfile2 = f'{polfilebase}1'
     gaincal(vis=visname, caltable = pregfile2, field = bfield, refant = referenceant,
                 minblperant = minbaselines, solnorm = False,  gaintype = 'G',
                 solint = "int", combine = '', calmode='p',
-                parang = False,append = append, gaintable=[bfile,kxfile,gfile,polfile])
+                parang = False,append = append, gaintable=[bfile,kxfile,gfile])
     safe_plotms(vis=pregfile2, xaxis='time', yaxis='phase', coloraxis='corr',
                 field=bfield, iteraxis='antenna',plotrange=[-1,-1,-180,180],
                 showgui= False, gridrows=3, gridcols=2, plotfile=f'{spw}initialgain2.jpg')
@@ -490,7 +482,7 @@ for visname, spw in split_vis:
             field = bfield, refant = referenceant,
             minblperant = minbaselines, solnorm = False,  solint = 60,
             combine = '', bandtype = 'B', fillgaps = 4,
-            gaintable = [gfile,polfile], gainfield = [bfield,bfield],
+            gaintable = [gfile], gainfield = [bfield],
             parang = False, append = append)
     gaincal(vis=visname, caltable = gfile2,
             field = fluxfield, refant = referenceant,
@@ -511,28 +503,27 @@ for visname, spw in split_vis:
             solint = "int", combine = '', calmode='ap',
             gaintable=bfile2,
             parang = False, append = True)
-    polcal(vis=visname,caltable=polfile2,field=bfield,refant=referenceant,gaintable=[bfile2,gfile2],poltype='D',solint='inf')
     if fluxfield!=bfield:
         myscale = fluxscale(vis=visname,caltable=gfile2,fluxtable=fluxfile2, reference=fluxfield,transfer=[gfield,bfield],incremental=False, fitorder=1)
     else:
         myscale = fluxscale(vis=visname,caltable=gfile2,fluxtable=fluxfile2, reference=fluxfield,transfer=[gfield],incremental=False, fitorder=1)
     applycal(vis=visname, field=fluxfield,
-            selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2,polfile2],
-            gainfield=[fluxfield,'',''],
-            parang=True, interp=['linear','',''])
+            selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2],
+            gainfield=[fluxfield,''],
+            parang=True, interp=['linear',''])
     applycal(vis=visname, field=gfield,
-            selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2,polfile2],
-            gainfield=[gfield,'',''],
-            parang=True, interp=['linear','',''])
+            selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2],
+            gainfield=[gfield,''],
+            parang=True, interp=['linear',''])
     if fluxfield!=bfield:
         applycal(vis=visname, field=bfield,
-                selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2,polfile2],
-                gainfield=[gfield,'',''],
-                parang=True, interp=['linear','',''])
+                selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2],
+                gainfield=[gfield,''],
+                parang=True, interp=['linear',''])
 
     applycal(vis=visname, field=target,
-            selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2,polfile2],
-            gainfield=[gfield,'',''],
+            selectdata=False, calwt=False, gaintable=[fluxfile2,bfile2],
+            gainfield=[gfield,''],
             parang=True, interp=['linear',''])
 
 
